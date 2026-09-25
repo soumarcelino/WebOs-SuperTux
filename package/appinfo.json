@@ -1,0 +1,9 @@
+{
+  "id": "matias.supertux",
+  "version": "0.6.6",
+  "vendor": "Matias",
+  "type": "native",
+  "main": "run-supertux",
+  "title": "SuperTux",
+  "icon": "icon.png"
+}

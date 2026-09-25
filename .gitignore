@@ -1,0 +1,9 @@
+/build/
+/deps/
+/*.ipk
+/package/data.zip
+/package/LICENSE.txt
+/package/lib*.so*
+/package/run-supertux
+/package/supertux2
+/package/supertux.log

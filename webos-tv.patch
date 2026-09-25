@@ -1,0 +1,424 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index b77029c..f7a5fc3 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -171,7 +171,7 @@ if(ENABLE_BOOST_STATIC_LIBS)
+ else(ENABLE_BOOST_STATIC_LIBS)
+   set(Boost_USE_STATIC_LIBS FALSE)
+ endif(ENABLE_BOOST_STATIC_LIBS)
+-find_package(Boost REQUIRED COMPONENTS filesystem system date_time locale)
++find_package(Boost REQUIRED COMPONENTS filesystem system)
+ include_directories(SYSTEM ${Boost_INCLUDE_DIR})
+ link_directories(${Boost_LIBRARY_DIRS})
+ 
+@@ -264,6 +264,7 @@ if(ENABLE_OPENGL)
+     set(HAVE_OPENGL TRUE)
+     add_definitions(-DUSE_OPENGLES2)
+   elseif(ENABLE_OPENGLES2 AND NOT EMSCRIPTEN)
++    find_package(PkgConfig REQUIRED)
+     pkg_check_modules(GLESV2 REQUIRED glesv2)
+     set(HAVE_OPENGL TRUE)
+     set(OPENGL_INCLUDE_DIR  ${GLESV2_INCLUDE_DIRS})
+@@ -343,6 +344,7 @@ if(NOT USE_SYSTEM_PHYSFS)
+     "${PHYSFS_PREFIX}/lib${LIB_SUFFIX}/physfs${CMAKE_LINK_LIBRARY_SUFFIX}"
+     "${PHYSFS_PREFIX}/lib${LIB_SUFFIX}/${CMAKE_STATIC_LIBRARY_PREFIX}physfs${CMAKE_STATIC_LIBRARY_SUFFIX}"
+     CMAKE_ARGS
++    -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+     -DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}
+     -DCMAKE_C_FLAGS=${CMAKE_C_FLAGS}
+     -DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}
+@@ -501,6 +503,7 @@ ExternalProject_Add(squirrel
+   "${SQUIRREL_PREFIX}/lib/${CMAKE_STATIC_LIBRARY_PREFIX}sqstdlib_static${CMAKE_STATIC_LIBRARY_SUFFIX}"
+   "${SQUIRREL_PREFIX}/lib/${CMAKE_STATIC_LIBRARY_PREFIX}squirrel_static${CMAKE_STATIC_LIBRARY_SUFFIX}"
+   CMAKE_ARGS
++  -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+   -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
+   -DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}
+   -DCMAKE_C_FLAGS=${CMAKE_C_FLAGS}
+@@ -553,6 +556,7 @@ ExternalProject_Add(tinygettext
+   BUILD_BYPRODUCTS "${TINYGETTEXT_PREFIX}/lib${LIB_SUFFIX}/${CMAKE_STATIC_LIBRARY_PREFIX}tinygettext${CMAKE_STATIC_LIBRARY_SUFFIX}"
+   LIST_SEPARATOR "|"
+   CMAKE_ARGS
++  -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+   -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
+   -DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}
+   -DCMAKE_C_FLAGS=${CMAKE_C_FLAGS}
+@@ -589,6 +593,7 @@ ExternalProject_Add(SDL_ttf
+   SOURCE_DIR "${CMAKE_SOURCE_DIR}/external/SDL_ttf/"
+   BUILD_BYPRODUCTS "${SDL_TTF_PREFIX}/lib/${CMAKE_STATIC_LIBRARY_PREFIX}SDL2_ttf${CMAKE_STATIC_LIBRARY_SUFFIX}"
+   CMAKE_ARGS
++  -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+   -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
+   -DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}
+   -DCMAKE_C_FLAGS=${CMAKE_C_FLAGS}
+@@ -927,7 +932,10 @@ if(WIN32)
+ else()
+   add_executable(supertux2 src/main.cpp)
+ endif(WIN32)
+-target_link_libraries(supertux2 supertux2_lib Boost::filesystem Boost::locale)
++target_link_libraries(supertux2 supertux2_lib Boost::filesystem)
++if(WIN32)
++  target_link_libraries(supertux2 Boost::locale)
++endif()
+ 
+ set_target_properties(supertux2_lib PROPERTIES OUTPUT_NAME supertux2_lib)
+ set_target_properties(supertux2_lib PROPERTIES COMPILE_FLAGS "${SUPERTUX2_EXTRA_WARNING_FLAGS}")
+diff --git a/external/partio_zip/zip_manager.hpp b/external/partio_zip/zip_manager.hpp
+index 666884d..15683d2 100644
+--- a/external/partio_zip/zip_manager.hpp
++++ b/external/partio_zip/zip_manager.hpp
+@@ -44,6 +44,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGES.
+ #include <fstream>
+ #include <iostream>
+ #include <map>
++#include <memory>
+ #include <string>
+ #include <stdexcept>
+ #include <vector>
+diff --git a/src/control/input_manager.cpp b/src/control/input_manager.cpp
+index 790d7fd..5ba27b8 100644
+--- a/src/control/input_manager.cpp
++++ b/src/control/input_manager.cpp
+@@ -17,6 +17,17 @@
+ 
+ #include "control/input_manager.hpp"
+ 
++#include <cstdio>
++#include <cstdlib>
++#include <cstring>
++
++#ifdef __linux__
++#include <fcntl.h>
++#include <linux/input.h>
++#include <sys/ioctl.h>
++#include <unistd.h>
++#endif
++
+ #include "control/game_controller_manager.hpp"
+ #include "control/joystick_config.hpp"
+ #include "control/joystick_manager.hpp"
+@@ -31,10 +42,31 @@ InputManager::InputManager(KeyboardConfig& keyboard_config,
+   joystick_manager(new JoystickManager(this, joystick_config)),
+   game_controller_manager(new GameControllerManager(this))
+ {
++#ifdef __linux__
++  if (std::getenv("SUPERTUX_WEBOS_REMOTE")) {
++    for (int index = 0; index < 32; ++index) {
++      char path[32];
++      std::snprintf(path, sizeof(path), "/dev/input/event%d", index);
++      int fd = open(path, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
++      if (fd < 0) continue;
++
++      char name[128] = {};
++      if (ioctl(fd, EVIOCGNAME(sizeof(name)), name) >= 0 &&
++          std::strstr(name, "RCU")) {
++        m_remote_fds.push_back(fd);
++      } else {
++        close(fd);
++      }
++    }
++  }
++#endif
+ }
+ 
+ InputManager::~InputManager()
+ {
++#ifdef __linux__
++  for (int fd : m_remote_fds) close(fd);
++#endif
+ }
+ 
+ const Controller&
+@@ -59,6 +91,39 @@ void
+ InputManager::update()
+ {
+   controller->update();
++#ifdef __linux__
++  for (int fd : m_remote_fds) {
++    input_event event;
++    while (read(fd, &event, sizeof(event)) == sizeof(event)) {
++      if (event.type != EV_KEY) continue;
++      SDL_Keycode key = SDLK_UNKNOWN;
++      switch (event.code) {
++        case KEY_PREVIOUS: // LG Back
++        case KEY_BACK:
++          key = SDLK_F17; break;
++        case KEY_RED: key = SDLK_F13; break;
++        case KEY_GREEN: key = SDLK_F14; break;
++        case KEY_YELLOW: key = SDLK_F15; break;
++        case KEY_BLUE: key = SDLK_F16; break;
++        case KEY_PLAY: key = SDLK_F18; break;
++        case KEY_PAUSE: key = SDLK_F19; break;
++        case KEY_REWIND: key = SDLK_F20; break;
++        case KEY_FASTFORWARD: key = SDLK_F21; break;
++        case BTN_LEFT: key = SDLK_F22; break; // Magic Remote pointer OK
++        case KEY_STOP: key = SDLK_F23; break;
++      }
++      if (key == SDLK_UNKNOWN) continue;
++
++      SDL_Event key_event = {};
++      key_event.type = event.value ? SDL_KEYDOWN : SDL_KEYUP;
++      key_event.key.state = event.value ? SDL_PRESSED : SDL_RELEASED;
++      key_event.key.repeat = event.value == 2;
++      key_event.key.keysym.sym = key;
++      key_event.key.keysym.scancode = SDL_GetScancodeFromKey(key);
++      SDL_PushEvent(&key_event);
++    }
++  }
++#endif
+ }
+ 
+ void
+diff --git a/src/control/input_manager.hpp b/src/control/input_manager.hpp
+index bfe4719..ca27673 100644
+--- a/src/control/input_manager.hpp
++++ b/src/control/input_manager.hpp
+@@ -59,6 +59,7 @@ public:
+ 
+ private:
+   std::unique_ptr<Controller> controller;
++  std::vector<int> m_remote_fds;
+ 
+ public:
+   bool& m_use_game_controller;
+diff --git a/src/control/keyboard_config.cpp b/src/control/keyboard_config.cpp
+index 51eac51..7148206 100644
+--- a/src/control/keyboard_config.cpp
++++ b/src/control/keyboard_config.cpp
+@@ -17,6 +17,7 @@
+ #include "control/keyboard_config.hpp"
+ 
+ #include <boost/optional.hpp>
++#include <cstdlib>
+ 
+ #include "util/log.hpp"
+ #include "util/reader_mapping.hpp"
+@@ -38,8 +39,8 @@ KeyboardConfig::KeyboardConfig() :
+   m_keymap[SDLK_ESCAPE]   = Control::ESCAPE;
+   m_keymap[SDLK_p]        = Control::START;
+   m_keymap[SDLK_PAUSE]    = Control::START;
+-  m_keymap[SDLK_RETURN]   = Control::MENU_SELECT;
+-  m_keymap[SDLK_KP_ENTER] = Control::MENU_SELECT;
++  m_keymap[SDLK_RETURN]   = Control::JUMP;
++  m_keymap[SDLK_KP_ENTER] = Control::JUMP;
+   m_keymap[SDLK_CARET]    = Control::CONSOLE;
+   m_keymap[SDLK_DELETE]   = Control::PEEK_LEFT;
+   m_keymap[SDLK_PAGEDOWN] = Control::PEEK_RIGHT;
+@@ -47,7 +48,23 @@ KeyboardConfig::KeyboardConfig() :
+   m_keymap[SDLK_END]      = Control::PEEK_DOWN;
+   m_keymap[SDLK_F1]       = Control::CHEAT_MENU;
+   m_keymap[SDLK_F2]       = Control::DEBUG_MENU;
+-  m_keymap[SDLK_BACKSPACE]= Control::REMOVE;
++  m_keymap[SDLK_BACKSPACE]= Control::ESCAPE;
++
++  if (std::getenv("SUPERTUX_WEBOS_REMOTE")) {
++    m_keymap[SDLK_F13] = Control::ACTION;     // Red
++    m_keymap[SDLK_F14] = Control::START;      // Green
++    m_keymap[SDLK_F15] = Control::PEEK_LEFT;  // Yellow
++    m_keymap[SDLK_F16] = Control::PEEK_RIGHT; // Blue
++    m_keymap[SDLK_F17] = Control::ESCAPE;     // Back
++    m_keymap[SDLK_F18] = Control::JUMP;       // Play
++    m_keymap[SDLK_F19] = Control::START;      // Pause
++    m_keymap[SDLK_F20] = Control::PEEK_LEFT;  // Rewind
++    m_keymap[SDLK_F21] = Control::PEEK_RIGHT; // Fast forward
++    m_keymap[SDLK_F22] = Control::JUMP;       // Pointer OK
++    m_keymap[SDLK_F23] = Control::ESCAPE;     // Stop
++    m_keymap[SDLK_8] = Control::PEEK_UP;
++    m_keymap[SDLK_0] = Control::PEEK_DOWN;
++  }
+ 
+   m_configurable_controls = {
+     Control::UP,
+@@ -56,6 +73,8 @@ KeyboardConfig::KeyboardConfig() :
+     Control::RIGHT,
+     Control::JUMP,
+     Control::ACTION,
++    Control::START,
++    Control::ESCAPE,
+     Control::PEEK_LEFT,
+     Control::PEEK_RIGHT,
+     Control::PEEK_UP,
+@@ -80,6 +99,10 @@ KeyboardConfig::read(const ReaderMapping& keymap_mapping)
+ 
+   keymap_mapping.get("jump-with-up", m_jump_with_up_kbd);
+ 
++  bool webos_remote_map = false;
++  keymap_mapping.get("webos-remote-map", webos_remote_map);
++  std::set<Control> restored_controls;
++
+   auto iter = keymap_mapping.get_iter();
+   while (iter.next())
+   {
+@@ -95,12 +118,35 @@ KeyboardConfig::read(const ReaderMapping& keymap_mapping)
+     const boost::optional<Control> maybe_control = Control_from_string(control_text);
+     if (maybe_control) {
+       if (m_configurable_controls.count(*maybe_control)) {
+-        bind_key(static_cast<SDL_Keycode>(key), *maybe_control);
++        if (restored_controls.insert(*maybe_control).second) {
++          for (auto it = m_keymap.begin(); it != m_keymap.end();) {
++            if (it->second == *maybe_control) it = m_keymap.erase(it);
++            else ++it;
++          }
++        }
++        m_keymap[static_cast<SDL_Keycode>(key)] = *maybe_control;
+       }
+     } else {
+       log_warning << "Invalid control '" << control_text << "' in keymap" << std::endl;
+     }
+   }
++
++  if (std::getenv("SUPERTUX_WEBOS_REMOTE") && !webos_remote_map) {
++    m_keymap[SDLK_RETURN] = Control::JUMP;
++    m_keymap[SDLK_F13] = Control::ACTION;
++    m_keymap[SDLK_F14] = Control::START;
++    m_keymap[SDLK_F15] = Control::PEEK_LEFT;
++    m_keymap[SDLK_F16] = Control::PEEK_RIGHT;
++    m_keymap[SDLK_F17] = Control::ESCAPE;
++    m_keymap[SDLK_F18] = Control::JUMP;
++    m_keymap[SDLK_F19] = Control::START;
++    m_keymap[SDLK_F20] = Control::PEEK_LEFT;
++    m_keymap[SDLK_F21] = Control::PEEK_RIGHT;
++    m_keymap[SDLK_F22] = Control::JUMP;
++    m_keymap[SDLK_F23] = Control::ESCAPE;
++    m_keymap[SDLK_8] = Control::PEEK_UP;
++    m_keymap[SDLK_0] = Control::PEEK_DOWN;
++  }
+ }
+ 
+ void
+@@ -151,6 +197,9 @@ KeyboardConfig::write(Writer& writer)
+   // config file is assumed and controls are reset to default
+   writer.write("sdl2", true);
+ 
++  if (std::getenv("SUPERTUX_WEBOS_REMOTE"))
++    writer.write("webos-remote-map", true);
++
+   writer.write("jump-with-up", m_jump_with_up_kbd);
+ 
+   for (const auto& i : m_keymap)
+diff --git a/src/control/keyboard_manager.cpp b/src/control/keyboard_manager.cpp
+index 16aac92..dfdd3b1 100644
+--- a/src/control/keyboard_manager.cpp
++++ b/src/control/keyboard_manager.cpp
+@@ -65,6 +65,13 @@ KeyboardManager::process_key_event(const SDL_KeyboardEvent& event)
+     // if menu mode: send key there
+     process_menu_key_event(event);
+   }
++  else if (event.keysym.sym == SDLK_RETURN || event.keysym.sym == SDLK_KP_ENTER)
++  {
++    // Keep the TV remote's OK key usable even when a saved keymap replaces it.
++    const bool down = event.type == SDL_KEYDOWN;
++    m_parent->get_controller().set_control(Control::JUMP, down);
++    m_parent->get_controller().set_control(Control::MENU_SELECT, down);
++  }
+   else if (key_mapping == m_keyboard_config.m_keymap.end())
+   {
+     // default action: update controls
+@@ -205,6 +212,7 @@ KeyboardManager::process_menu_key_event(const SDL_KeyboardEvent& event)
+       break;
+     case SDLK_RETURN:
+     case SDLK_KP_ENTER:
++    case SDLK_F22: // Magic Remote pointer OK
+       control = Control::MENU_SELECT;
+       break;
+     case SDLK_ESCAPE:
+@@ -214,7 +222,7 @@ KeyboardManager::process_menu_key_event(const SDL_KeyboardEvent& event)
+       control = Control::START;
+       break;
+     case SDLK_BACKSPACE:
+-      control = Control::REMOVE;
++      control = Control::ESCAPE;
+       break;
+     default:
+       if (m_keyboard_config.m_keymap.count(event.keysym.sym) == 0)
+diff --git a/src/supertux/gameconfig.cpp b/src/supertux/gameconfig.cpp
+index d8e29ca..8d426b1 100644
+--- a/src/supertux/gameconfig.cpp
++++ b/src/supertux/gameconfig.cpp
+@@ -41,7 +41,7 @@ Config::Config() :
+   fit_window(true),
+ #endif
+   magnification(0.0f),
+-  use_fullscreen(false),
++  use_fullscreen(true),
+   video(VideoSystem::VIDEO_AUTO),
+   try_vsync(true),
+   show_fps(false),
+diff --git a/src/supertux/main.cpp b/src/supertux/main.cpp
+index 1dc3648..1fe6461 100644
+--- a/src/supertux/main.cpp
++++ b/src/supertux/main.cpp
+@@ -204,7 +204,11 @@ void PhysfsSubsystem::find_datadir() const
+     std::string basepath = basepath_c ? basepath_c : "./";
+     SDL_free(basepath_c);
+ 
+-    if (FileSystem::exists(FileSystem::join(BUILD_DATA_DIR, "credits.stxt")))
++    if (FileSystem::exists(FileSystem::join(basepath, "data.zip")))
++    {
++      datadir = FileSystem::join(basepath, "data.zip");
++    }
++    else if (FileSystem::exists(FileSystem::join(BUILD_DATA_DIR, "credits.stxt")))
+     {
+       datadir = BUILD_DATA_DIR;
+       // Add config dir for supplemental files
+@@ -357,6 +361,7 @@ SDLSubsystem::SDLSubsystem()
+     msg << "Couldn't initialize SDL: " << SDL_GetError();
+     throw std::runtime_error(msg.str());
+   }
++  SDL_DisableScreenSaver();
+ 
+   if (TTF_Init() < 0)
+   {
+diff --git a/src/supertux/menu/keyboard_menu.cpp b/src/supertux/menu/keyboard_menu.cpp
+index 11f8c6c..1dc3731 100644
+--- a/src/supertux/menu/keyboard_menu.cpp
++++ b/src/supertux/menu/keyboard_menu.cpp
+@@ -17,6 +17,8 @@
+ 
+ #include "supertux/menu/keyboard_menu.hpp"
+ 
++#include <cstdlib>
++
+ #include "control/input_manager.hpp"
+ #include "control/keyboard_manager.hpp"
+ #include "gui/item_controlfield.hpp"
+@@ -35,6 +37,8 @@ KeyboardMenu::KeyboardMenu(InputManager& input_manager) :
+   add_controlfield(static_cast<int>(Control::RIGHT),      _("Right"));
+   add_controlfield(static_cast<int>(Control::JUMP),       _("Jump"));
+   add_controlfield(static_cast<int>(Control::ACTION),     _("Action"));
++  add_controlfield(static_cast<int>(Control::START),      _("Pause/Menu"));
++  add_controlfield(static_cast<int>(Control::ESCAPE),     _("Back button"));
+   add_controlfield(static_cast<int>(Control::PEEK_LEFT),  _("Peek Left"));
+   add_controlfield(static_cast<int>(Control::PEEK_RIGHT), _("Peek Right"));
+   add_controlfield(static_cast<int>(Control::PEEK_UP),    _("Peek Up"));
+@@ -65,7 +69,18 @@ KeyboardMenu::get_key_name(SDL_Keycode key) const
+     case SDLK_RIGHT:
+       return _("Right cursor");
+     case SDLK_RETURN:
+-      return _("Return");
++      return std::getenv("SUPERTUX_WEBOS_REMOTE") ? "OK (controle)" : _("Return");
++    case SDLK_F13: return "Vermelho (controle)";
++    case SDLK_F14: return "Verde (controle)";
++    case SDLK_F15: return "Amarelo (controle)";
++    case SDLK_F16: return "Azul (controle)";
++    case SDLK_F17: return "Voltar (controle)";
++    case SDLK_F18: return "Play (controle)";
++    case SDLK_F19: return "Pause (controle)";
++    case SDLK_F20: return "Retroceder (controle)";
++    case SDLK_F21: return "Avançar (controle)";
++    case SDLK_F22: return "OK ponteiro (controle)";
++    case SDLK_F23: return "Stop (controle)";
+     case SDLK_SPACE:
+       return _("Space");
+     case SDLK_RSHIFT:
+@@ -120,6 +135,10 @@ KeyboardMenu::refresh()
+   if (micf) micf->change_input(get_key_name(kbd_cfg.reversemap_key(Control::JUMP)));
+   micf = dynamic_cast<ItemControlField*>(&get_item_by_id(static_cast<int>(Control::ACTION)));
+   if (micf) micf->change_input(get_key_name(kbd_cfg.reversemap_key(Control::ACTION)));
++  micf = dynamic_cast<ItemControlField*>(&get_item_by_id(static_cast<int>(Control::START)));
++  if (micf) micf->change_input(get_key_name(kbd_cfg.reversemap_key(Control::START)));
++  micf = dynamic_cast<ItemControlField*>(&get_item_by_id(static_cast<int>(Control::ESCAPE)));
++  if (micf) micf->change_input(get_key_name(kbd_cfg.reversemap_key(Control::ESCAPE)));
+   micf = dynamic_cast<ItemControlField*>(&get_item_by_id(static_cast<int>(Control::PEEK_LEFT)));
+   if (micf) micf->change_input(get_key_name(kbd_cfg.reversemap_key(Control::PEEK_LEFT)));
+   micf = dynamic_cast<ItemControlField*>(&get_item_by_id(static_cast<int>(Control::PEEK_RIGHT)));
