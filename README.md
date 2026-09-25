@@ -2,6 +2,8 @@
 
 A native LG webOS port of [SuperTux 0.6.3](https://github.com/SuperTux/supertux/tree/v0.6.3), using SDL2 and OpenGL ES 2. Tested on a rooted LG webOS TV.
 
+![SuperTux running on an LG webOS TV](screenshot.png)
+
 ## Build
 
 You need a compatible ARM webOS SDK, CMake, the [SuperTux build dependencies](https://github.com/SuperTux/supertux/blob/v0.6.3/INSTALL.md), and the webOS `ares` CLI tools.
